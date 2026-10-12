@@ -10,3 +10,4 @@ data/*
 !data/README.md
 !data/.gitkeep
 .env
+.DS_Store
