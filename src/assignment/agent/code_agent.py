@@ -12,6 +12,7 @@ from assignment.agent.base import (
 )
 from assignment.agent.tools import EXECUTE_TOOL, SEND_MESSAGE_TOOL
 from assignment.env import Environment
+from assignment.prompts import CODE_AGENT_SYSTEM_PROMPT_TEMPLATE
 
 class CodeAgent(Agent):
     """An agent that fixes a software issue and submits a git patch."""
@@ -46,8 +47,23 @@ class CodeAgent(Agent):
         # TODO(Part 1.3): Make the `execute` and `send_message` tools available
         # to the agent.
 
-        # TODO(1.1.b): Construct the system prompt and task_prompt. These
-        # should be usable by the `Agent.build_prompt` method.
+        system_information = json.dumps(
+            {
+                "machine": self.env.machine,
+                "release": self.env.release,
+                "system": self.env.system,
+                "version": self.env.version,
+            },
+            indent=2,
+        )
+        self.system_prompt = CODE_AGENT_SYSTEM_PROMPT_TEMPLATE.render(
+            cwd=self.env.cwd,
+            system_information=system_information,
+        )
+        self.task_prompt = (
+            f"Fix the following issue in the repository at {self.env.cwd}:\n\n"
+            f"{self.task}"
+        )
         # TODO(1.4): If any skills are available to the agent, make their
         # descriptions/metadata available to the agent in the prompt.
 
