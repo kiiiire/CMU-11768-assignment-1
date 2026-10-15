@@ -1,0 +1,25 @@
+diff --git a/src/chess_app/game.py b/src/chess_app/game.py
+index f153e00..2a75d96 100644
+--- a/src/chess_app/game.py
++++ b/src/chess_app/game.py
+@@ -75,11 +75,15 @@ class ChessGame:
+             human_state = self._state_unlocked()
+ 
+             engine_move: str | None = None
+-            reply = self._choose_engine_move()
+-            engine_move = reply.uci()
+-            self._record_and_push(reply)
+-
+-            state = self._state_unlocked()
++            if human_state["game_over"]:
++                # The human's move ended the game, so there is no engine reply.
++                state = dict(human_state)
++            else:
++                reply = self._choose_engine_move()
++                engine_move = reply.uci()
++                self._record_and_push(reply)
++
++                state = self._state_unlocked()
+             state["human_move"] = move.uci()
+             state["human_state"] = human_state
+             state["engine_move"] = engine_move
