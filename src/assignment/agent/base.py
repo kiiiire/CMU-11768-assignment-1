@@ -19,6 +19,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 from openai import OpenAI
+import yaml
 
 from assignment.env import Environment
 from assignment.agent.tools import INVOKE_SKILL_TOOL
@@ -78,6 +79,23 @@ def rough_message_tokens(messages: list[dict[str, Any]]) -> int:
 
     serialized = json.dumps(messages, ensure_ascii=False, separators=(",", ":"))
     return max(1, math.ceil(len(serialized) / 4))
+
+
+def _extract_frontmatter(text: str, path: Path) -> str:
+    """Return the YAML frontmatter of a SKILL.md (text between the `---` tags).
+
+    【译】返回 SKILL.md 的 YAML frontmatter。
+    """
+
+    lines = text.splitlines(keepends=True)
+    if not lines or lines[0].strip() != "---":
+        raise ValueError(
+            f"Missing frontmatter in {path}: expected the file to start with '---'"
+        )
+    for index, line in enumerate(lines[1:], start=1):
+        if line.strip() == "---":
+            return "".join(lines[1:index])
+    raise ValueError(f"Missing closing '---' for frontmatter in {path}")
 
 
 class Agent:
@@ -200,7 +218,47 @@ class Agent:
         # 包含：给模型技能目录用的简明 ``metadata`` 字符串，以及供
         # ``invoke_skill`` 使用的技能文件完整 ``content``。对重复名称、
         # 格式错误或缺失的 frontmatter，要用清晰的 ``ValueError`` 拒绝。
-        raise NotImplementedError
+        if not skills_path.is_dir():
+            raise ValueError(f"Skills path is not a directory: {skills_path}")
+
+        skills: dict[str, dict[str, str]] = {}
+        sources: dict[str, Path] = {}
+        for child in sorted(skills_path.iterdir()):
+            if not child.is_dir():
+                continue
+            skill_file = child / "SKILL.md"
+            if not skill_file.is_file():
+                raise ValueError(f"Skill directory has no SKILL.md: {child}")
+
+            text = skill_file.read_text(encoding="utf-8")
+            frontmatter = _extract_frontmatter(text, skill_file)
+            try:
+                fields = yaml.safe_load(frontmatter)
+            except yaml.YAMLError as exc:
+                raise ValueError(
+                    f"Malformed YAML frontmatter in {skill_file}: {exc}"
+                ) from exc
+            if not isinstance(fields, dict):
+                raise ValueError(
+                    f"Frontmatter in {skill_file} is not a mapping: {fields!r}"
+                )
+            name = fields.get("name")
+            if not isinstance(name, str) or not name:
+                raise ValueError(
+                    f"Frontmatter in {skill_file} must have a non-empty string "
+                    f"'name', got: {name!r}"
+                )
+            if name in skills:
+                raise ValueError(
+                    f"Duplicate skill name '{name}' in both "
+                    f"{sources[name]} and {skill_file}"
+                )
+            skills[name] = {
+                "metadata": frontmatter.strip(),
+                "content": text,
+            }
+            sources[name] = skill_file
+        return skills
 
     def query_language_model(self) -> dict[str, Any]:
         """Send one tool-enabled Chat Completions request and normalize it.
@@ -426,7 +484,19 @@ class Agent:
             # `maybe_compact_context()`。它已经完成活跃 token 的估算和阈值
             # 判断，并记录压缩事件用于日志。
 
-            raise NotImplementedError
+            while not self.finished:
+                # Checked before querying so a run makes exactly `step_limit`
+                # model calls before the budget error, never one past it.
+                # 【译】在下一次查询之前检查，保证运行在预算耗尽前恰好发生
+                # `step_limit` 次模型调用，绝不会多出一次。
+                if self.steps_taken >= self.step_limit:
+                    raise StepLimitError(f"Step limit of {self.step_limit} reached.")
+                self.maybe_compact_context()
+                message = self.query_language_model()
+                self.messages.append(message)
+                tool_calls = message.get("tool_calls") or []
+                if tool_calls:
+                    self.messages.extend(self.execute_tool_calls(tool_calls))
         finally:
             # This block is provided infrastructure. Do not modify it: a
             # trajectory is required even when a run fails.
